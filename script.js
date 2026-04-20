@@ -20,6 +20,7 @@ const state = {
     fullName: "",
     email: "",
     password: "",
+    confirmPassword: "",
     city: "",
   },
   profile: {
@@ -127,6 +128,11 @@ const products = [
 ];
 
 const app = document.getElementById("app");
+const SEARCH_DEBOUNCE_MS = 120;
+let searchRenderTimer = null;
+const productSearchText = new Map(
+  products.map((product) => [product.id, product.name.toLowerCase()])
+);
 
 function money(value) {
   return `$${value.toFixed(2)}`;
@@ -151,6 +157,14 @@ function setNotice(message, duration = 1600) {
   }, duration);
 }
 
+function normalizeInput(value) {
+  return String(value || "").trim();
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 function getProduct(productId) {
   return products.find((product) => product.id === productId);
 }
@@ -163,11 +177,8 @@ function getFilteredProducts() {
   const q = state.search.trim().toLowerCase();
   return products.filter((product) => {
     const matchesCategory =
-      state.selectedCategory === "All" || product.category === state.selectedCategory;
-    const matchesSearch =
-      !q ||
-      product.name.toLowerCase().includes(q) ||
-      product.description.toLowerCase().includes(q);
+      state.selectedCategory === "Все" || product.category === state.selectedCategory;
+    const matchesSearch = !q || productSearchText.get(product.id).includes(q);
     return matchesCategory && matchesSearch;
   });
 }
@@ -217,26 +228,65 @@ function updateQuantity(productId, delta) {
 }
 
 function login() {
-  if (!state.loginForm.email || !state.loginForm.password) {
+  const email = normalizeInput(state.loginForm.email).toLowerCase();
+  const password = state.loginForm.password;
+
+  if (!email || !password) {
     setNotice("Введите email и пароль");
     return;
   }
-  state.profile.email = state.loginForm.email;
+  if (!isValidEmail(email)) {
+    setNotice("Введите корректный email");
+    return;
+  }
+
+  state.loginForm.email = email;
+  state.profile.email = email;
   state.isAuthenticated = true;
   state.screen = "Главная";
   setNotice("С возвращением в Nur");
 }
 
 function register() {
-  if (!state.registerForm.fullName || !state.registerForm.email || !state.registerForm.password) {
-    setNotice("Заполните все обязательные поля");
+  const fullName = normalizeInput(state.registerForm.fullName);
+  const email = normalizeInput(state.registerForm.email).toLowerCase();
+  const password = state.registerForm.password;
+  const confirmPassword = state.registerForm.confirmPassword;
+  const city = normalizeInput(state.registerForm.city);
+
+  if (!fullName || !email || !password || !confirmPassword) {
+    setNotice("Заполните имя, email и оба поля пароля");
     return;
   }
-  state.profile.fullName = state.registerForm.fullName;
-  state.profile.email = state.registerForm.email;
-  state.profile.city = state.registerForm.city || state.profile.city;
-  state.loginForm.email = state.registerForm.email;
-  state.loginForm.password = state.registerForm.password;
+  if (fullName.length < 2) {
+    setNotice("Имя должно быть не короче 2 символов");
+    return;
+  }
+  if (!isValidEmail(email)) {
+    setNotice("Введите корректный email");
+    return;
+  }
+  if (password.length < 6) {
+    setNotice("Пароль должен быть не короче 6 символов");
+    return;
+  }
+  if (password !== confirmPassword) {
+    setNotice("Пароли не совпадают");
+    return;
+  }
+
+  state.profile.fullName = fullName;
+  state.profile.email = email;
+  state.profile.city = city || state.profile.city;
+  state.loginForm.email = email;
+  state.loginForm.password = password;
+  state.registerForm = {
+    fullName: "",
+    email: "",
+    password: "",
+    confirmPassword: "",
+    city: "",
+  };
   state.isAuthenticated = true;
   state.screen = "Главная";
   setNotice("Аккаунт успешно создан");
@@ -320,6 +370,7 @@ function renderAuth() {
               <input class="field" name="register-fullName" placeholder="Полное имя" value="${escapeHtml(state.registerForm.fullName)}" />
               <input class="field" name="register-email" placeholder="Электронная почта" value="${escapeHtml(state.registerForm.email)}" />
               <input class="field" name="register-password" type="password" placeholder="Пароль" value="${escapeHtml(state.registerForm.password)}" />
+              <input class="field" name="register-confirmPassword" type="password" placeholder="Повторите пароль" value="${escapeHtml(state.registerForm.confirmPassword)}" />
               <input class="field" name="register-city" placeholder="Город" value="${escapeHtml(state.registerForm.city)}" />
               <button class="btn btn-primary" data-action="register">Создать аккаунт</button>
             </section>
@@ -384,7 +435,7 @@ function renderShop() {
           <h3 class="stack-title">Магазин</h3>
           <button class="linkish" data-nav="Избранное">Избранное</button>
         </div>
-        <p class="subtle">Ищите по названию, текстуре, эффекту или типу ухода.</p>
+        <p class="subtle">Ищите только по названию товара.</p>
         <input class="field" name="shop-search" placeholder="Поиск косметики..." value="${escapeHtml(state.search)}" />
         <div class="chips">${chips}</div>
       </section>
@@ -588,7 +639,14 @@ document.addEventListener("input", (event) => {
     state.profile[name.replace("profile-", "")] = value;
   }
   if (name === "shop-search") {
+    if (state.search === value) return;
     state.search = value;
+    clearTimeout(searchRenderTimer);
+    searchRenderTimer = setTimeout(() => {
+      if (state.isAuthenticated && state.screen === "Магазин" && !state.selectedProductId) {
+        render();
+      }
+    }, SEARCH_DEBOUNCE_MS);
   }
 });
 
